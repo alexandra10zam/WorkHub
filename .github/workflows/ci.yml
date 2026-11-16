@@ -1,0 +1,113 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/workhub
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Unit + integration tests (Testcontainers)
+        run: mvn -B verify
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco
+
+  helm-lint:
+    name: Lint Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint charts/workhub
+      - run: helm template workhub charts/workhub --set autoscaling.enabled=true --set ingress.enabled=true > /dev/null
+
+  k8s-smoke-test:
+    name: Deploy to Kubernetes (kind) and smoke test
+    needs: [test, helm-lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: workhub
+      - name: Build image and load it into kind
+        run: |
+          docker build -t workhub:ci .
+          kind load docker-image workhub:ci --name workhub
+      - name: Deploy PostgreSQL and WorkHub
+        run: |
+          kubectl create secret generic workhub-db --from-literal=password=ci-db-pass
+          kubectl create secret generic workhub-api --from-literal=username=ci --from-literal=password=ci-api-pass
+          kubectl apply -f k8s/dev/postgres.yaml
+          kubectl rollout status deployment/postgres --timeout=120s
+          helm install workhub charts/workhub \
+            --set image.repository=workhub --set image.tag=ci --set image.pullPolicy=Never \
+            --wait --timeout 5m
+      - name: Smoke test through the Service
+        run: |
+          kubectl port-forward svc/workhub 8080:80 &
+          sleep 5
+          curl -fsS http://localhost:8080/actuator/health/readiness
+          curl -fsS -u ci:ci-api-pass -H 'Content-Type: application/json' \
+            -d '{"title":"Smoke test","assignee":"ci","projectName":"WorkHub"}' \
+            http://localhost:8080/api/v1/tasks
+          curl -fsS -u ci:ci-api-pass "http://localhost:8080/api/v1/tasks?assignee=ci" | grep -q "Smoke test"
+      - name: Dump state on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe deployment workhub
+          kubectl logs -l app.kubernetes.io/name=workhub --tail=200
+
+  publish-image:
+    name: Publish image to GHCR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [k8s-smoke-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
