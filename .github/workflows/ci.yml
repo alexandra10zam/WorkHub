@@ -76,9 +76,10 @@ jobs:
       - name: Dump state on failure
         if: failure()
         run: |
-          kubectl get pods -o wide
-          kubectl describe deployment workhub
-          kubectl logs -l app.kubernetes.io/name=workhub --tail=200
+          kubectl get pods -o wide || true
+          kubectl describe pods -l app.kubernetes.io/name=workhub || true
+          kubectl logs -l app.kubernetes.io/name=workhub --tail=200 || true
+          kubectl get events --sort-by=.lastTimestamp | tail -30 || true
 
   publish-image:
     name: Publish image to GHCR

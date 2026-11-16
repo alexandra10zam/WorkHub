@@ -14,8 +14,9 @@ RUN java -Djarmode=layertools -jar app.jar extract
 
 # ---- runtime: small JRE image, non-root user
 FROM eclipse-temurin:21-jre-alpine
-RUN addgroup -S workhub && adduser -S workhub -G workhub
-USER workhub
+# Numeric UID so Kubernetes can enforce runAsNonRoot
+RUN addgroup -S -g 10001 workhub && adduser -S -u 10001 -G workhub workhub
+USER 10001
 WORKDIR /app
 COPY --from=layers /layers/dependencies/ ./
 COPY --from=layers /layers/spring-boot-loader/ ./
