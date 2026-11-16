@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workhub.fullname" . }}
+  labels:
+    {{- include "workhub.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "workhub.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "workhub.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: workhub
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DB_URL
+              value: {{ .Values.database.url | quote }}
+            - name: DB_USERNAME
+              value: {{ .Values.database.username | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.passwordKey }}
+            - name: APP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiAuth.existingSecret }}
+                  key: {{ .Values.apiAuth.usernameKey }}
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.apiAuth.existingSecret }}
+                  key: {{ .Values.apiAuth.passwordKey }}
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

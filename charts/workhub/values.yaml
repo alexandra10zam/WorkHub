@@ -1,0 +1,50 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/alexandra10zam/workhub
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Database connection. The password is read from an existing Secret so it never lands in values files.
+database:
+  url: jdbc:postgresql://postgres:5432/workhub
+  username: workhub
+  existingSecret: workhub-db
+  passwordKey: password
+
+# API basic-auth credentials, also from an existing Secret
+apiAuth:
+  existingSecret: workhub-api
+  usernameKey: username
+  passwordKey: password
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 384Mi
+  limits:
+    memory: 768Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: false
+  className: nginx
+  host: workhub.local
+
+# Creates a ServiceMonitor for the Prometheus Operator (kube-prometheus-stack)
+serviceMonitor:
+  enabled: false
+  interval: 15s
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
