@@ -1,15 +1,61 @@
+# Full local stack: API + PostgreSQL + Prometheus + Grafana
+#   docker compose up --build
+#   API:        http://localhost:8080/swagger-ui.html   (admin / change-me)
+#   Prometheus: http://localhost:9090
+#   Grafana:    http://localhost:3000                   (admin / admin)
 services:
   postgres:
-    image: postgres:16
-    container_name: task-postgres
+    image: postgres:16-alpine
     environment:
-      POSTGRES_DB: task_service_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: workhub
+      POSTGRES_USER: workhub
+      POSTGRES_PASSWORD: workhub
     ports:
-      - "5432:5432"
+      - "${PG_PORT:-5432}:5432"
     volumes:
-      - task_service_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workhub -d workhub"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/workhub
+      DB_USERNAME: workhub
+      DB_PASSWORD: workhub
+      APP_USERNAME: admin
+      APP_PASSWORD: change-me
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"      # read-only dashboards without login, local use only
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
 
 volumes:
-  task_service_data:
+  pgdata:
