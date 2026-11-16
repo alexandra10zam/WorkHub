@@ -32,3 +32,4 @@ build/
 
 ### VS Code ###
 .vscode/
+.flow-node-tasks.lock

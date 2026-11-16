@@ -1,18 +1,42 @@
 spring:
-  main:
-    allow-bean-definition-overriding: true
+  application:
+    name: workhub
   datasource:
-    url: jdbc:postgresql://localhost:5432/task_service_db
-    username: postgres
-    password: postgres
-
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/workhub}
+    username: ${DB_USERNAME:workhub}
+    password: ${DB_PASSWORD:workhub}
   jpa:
+    open-in-view: false
     hibernate:
-      ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
+      ddl-auto: validate   # schema is owned by Flyway, Hibernate only validates it
+  flyway:
+    enabled: true
 
 server:
-  port: 9090
+  port: 8080
+  shutdown: graceful
+
+workhub:
+  security:
+    username: ${APP_USERNAME:admin}
+    password: ${APP_PASSWORD:change-me}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true      # /actuator/health/liveness and /readiness for Kubernetes
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true   # needed for histogram_quantile() latency panels and alerts
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
